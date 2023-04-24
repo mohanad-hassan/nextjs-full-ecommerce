@@ -9,6 +9,12 @@ import LoginInput from "@/components/inputs/loginInput";
 import * as Yup from "yup";
 import CircledIconBtn from "@/components/circledIconBtn";
 import { signIn, getProviders } from "next-auth/react";
+import axios from "axios";
+import {  useRouter } from "next/router";
+import DotLoaderSpinner from "../components/loaders/dotLoader";
+
+import { getSession, getCsrfToken } from "next-auth/react";
+
 const initialValues = {
   login_email: "",
   login_password: "",
@@ -20,19 +26,21 @@ const initialValues = {
   error: "",
   login_error: "",
 };
-const Signin = ({providers}) => {
+const Signin = ({ providers ,callbackUrl,csrfToken}) => {
+  const [loading, setLoading] = useState(false);
   const [user, setUser] = useState(initialValues);
+  const router = useRouter()
   const {
-  login_email,
-  login_password,
-  name,
-  email,
-  password,
-  conf_password,
-  success,
-  error,
-  login_error,
-}= user;
+    login_email,
+    login_password,
+    name,
+    email,
+    password,
+    conf_password,
+    success,
+    error,
+    login_error,
+  } = user;
   const handleChange = (e) => {
     const name = e.target.name;
     const value = e.target.value;
@@ -44,6 +52,31 @@ const Signin = ({providers}) => {
       .email("Please enter a valid email address."),
     login_password: Yup.string().required("Please enter a password"),
   });
+
+  const signUpHandler = async () => {
+    try {
+      setLoading(true);
+      const { data } = await axios.post("/api/auth/signup", {
+        name,
+        email,
+        password,
+      });
+      setUser({ ...user, error: "", success: data.message });
+      setLoading(false);
+      setTimeout(async () => {
+        let options = {
+          redirect: false,
+          email: email,
+          password: password,
+        };
+        const res = await signIn("credentials", options);
+        router.push( "/");
+      }, 2000);
+    } catch (error) {
+      setLoading(false);
+      setUser({ ...user, success: "", error: error.response.data.message });
+    }
+  };
 
   const registerValidation = Yup.object({
     name: Yup.string()
@@ -67,8 +100,27 @@ const Signin = ({providers}) => {
       .oneOf([Yup.ref("password")], "Passwords must match."),
   });
 
+
+  const signInHandler = async () => {
+    setLoading(true);
+    let options = {
+      redirect: false,
+      email: login_email,
+      password: login_password,
+    };
+    const res = await signIn("credentials", options);
+    setUser({ ...user, success: "", error: "" });
+    setLoading(false);
+    if (res?.error) {
+      setLoading(false);
+      setUser({ ...user, login_error: res?.error });
+    } else {
+      return router.push(callbackUrl || "/");
+    }
+  }
   return (
-    <div>
+    <>
+      {loading && <DotLoaderSpinner loading={loading} />}
       <Header />
       <div className={styles.login}>
         <div className={styles.login__container}>
@@ -94,25 +146,32 @@ const Signin = ({providers}) => {
                 login_password,
               }}
               validationSchema={loginValidation}
+              onSubmit={() => {
+                signInHandler();
+              }}
             >
               {(form) => (
-                <Form>
-              
+                <Form method="post" action="/api/auth/signin/email">
+                  <input
+                    type="hidden"
+                    name="csrfToken"
+                    defaultValue={csrfToken}
+                  />
                   <LoginInput
                     type="text"
-                    name="email"
+                    name="login_email"
                     icon="email"
                     placeholder="Email Adress"
                     onChange={handleChange}
                   />
                   <LoginInput
                     type="password"
-                    name="password"
+                    name="login_password"
                     icon="password"
                     placeholder="Password"
                     onChange={handleChange}
                   />
-                
+
                   <CircledIconBtn type="submit" text="Sign in" />
                   {login_error && (
                     <span className={styles.error}>{login_error}</span>
@@ -207,34 +266,38 @@ const Signin = ({providers}) => {
         </div>
       </div>
       <Footer />
-    </div>
+    </>
   );
 };
 
 export default Signin;
 
 export async function getServerSideProps(context) {
-  // const { req, query } = context;
 
-  // const session = await getSession({ req });
-  // const { callbackUrl } = query;
+  //this code is for see the page we came from to the signin page , to redirect to it after sign in 
+   const { req, query } = context;
 
-  // if (session) {
-  //   return {
-  //     redirect: {
-  //       destination: callbackUrl,
-  //     },
-  //   };
-  // }
-  //const csrfToken = await getCsrfToken(context);
+   const session = await getSession({ req });
+   const { callbackUrl } = query;
+//this code is for restrict signin page if the user already signin 
+   if (session) {
+     return {
+      redirect: {
+        destination: callbackUrl,
+       },
+     };
+  }
+  //its from nextauth we added to forms as hideen
+  //input , its for security purposes
+  const csrfToken = await getCsrfToken(context);
 
   //we will go throw provideres we are using in next auth  , and map to show them to user , the function getProviders () is from next auth  , it returns object not array , we convert it to array before use it .
   const providers = Object.values(await getProviders());
   return {
     props: {
       providers,
-      //   csrfToken,
-      //  callbackUrl,
+        csrfToken,
+        callbackUrl,
     },
   };
 }
